@@ -1,16 +1,59 @@
-# CLI
+# ecs
 
-A templated repository for a CLI written in Go.
+Command line application written in **GO** 
 
-What you get by using this repo template:
+[![Apache 2.0 License](https://img.shields.io/badge/License-Apache%202.0-blue)](./LICENSE)
+![Go Version](https://img.shields.io/github/go-mod/go-version/jimschubert/ecs)
+![Go](https://github.com/jimschubert/ecs/workflows/Build/badge.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jimschubert/ecs)](https://goreportcard.com/report/github.com/jimschubert/ecs)
+![Docker Pulls](https://img.shields.io/docker/pulls/jimschubert/ecs)
+<!-- [![codecov](https://codecov.io/gh/jimschubert/ecs/branch/master/graph/badge.svg)](https://codecov.io/gh/jimschubert/ecs) --> 
 
-* GitHub Workflows for Build and Release
-* Docker distribution via GitHub Packages
-  - Release images are labled using opencontainers annotations
-  - Two versions are pushed automatically: `latest` and explicit tag version
-* Goreleaser configuration defaults for cross-platform builds
-  - This does _not_ include signing (refer to [goreleaser](https://goreleaser.com/sign/) for docs)
-* A placeholder CODE_OF_CONDUCT.md
-* A placeholder Apache 2.0 license
-* Project initialization according to the owner/repository where initialized
+## Installation
 
+Latest binary releases are available via [GitHub Releases](https://github.com/jimschubert/ecs/releases).
+
+## Build
+
+Build a local distribution for evaluation using goreleaser.
+
+```bash
+goreleaser release --skip-publish --snapshot --rm-dist
+```
+
+This will create an executable application for your os/architecture under `dist`:
+
+```
+dist
+├── <app>_darwin_amd64
+│   └── <app>
+├── <app>_linux_386
+│   └── <app>
+├── <app>_linux_amd64
+│   └── <app>
+├── <app>_linux_arm64
+│   └── <app>
+├── <app>_linux_arm_6
+│   └── <app>
+└── <app>_windows_amd64
+    └── <app>.exe
+```
+
+Build and execute locally:
+
+* Get dependencies
+```shell
+go get -d ./...
+```
+* Build
+```shell
+go build cmd/main.go
+```
+* Run
+```shell
+./main
+```
+
+## License
+
+This project is [licensed](./LICENSE) under Apache 2.0.
