@@ -10,4 +10,5 @@ require (
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/rivo/tview v0.0.0-20200712113419-c65badfc3d92
 	github.com/sirupsen/logrus v1.5.0
+	golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2
 )

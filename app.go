@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"net"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/atotto/clipboard"
@@ -14,19 +17,20 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/gdamore/tcell"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/rivo/tview"
 )
 
 type region struct {
-	name string
+	name        string
 	description string
 }
 
 var (
-	mainPage = "*main*"
+	mainPage    = "*main*"
 	regionsList = []region{
-		{"af-south-1",  "Africa (Cape Town)"},
+		{"af-south-1", "Africa (Cape Town)"},
 		{"ap-east-1", "Asia Pacific (Hong Kong)"},
 		{"ap-northeast-1", "Asia Pacific (Tokyo)"},
 		{"ap-northeast-2", "Asia Pacific (Seoul)"},
@@ -50,12 +54,13 @@ var (
 )
 
 type App struct {
-	config      aws.Config
-	instance    *tview.Application
-	pages       *tview.Pages
-	finderFocus tview.Primitive
-	Tag         string
-	Query       string
+	config       aws.Config
+	instance     *tview.Application
+	pages        *tview.Pages
+	finderFocus  tview.Primitive
+	ClusterQuery string
+	Query        string
+	PublicKey    string
 }
 
 func (a *App) Run(writer io.Writer) error {
@@ -68,7 +73,7 @@ func (a *App) Run(writer io.Writer) error {
 
 	a.config = cfg
 
-	a.ecs(a.Tag)
+	a.ecs(a.ClusterQuery)
 
 	if err := a.instance.Run(); err != nil {
 		log.Fatalf("Error running application: %s\n", err)
@@ -77,7 +82,7 @@ func (a *App) Run(writer io.Writer) error {
 	return nil
 }
 
-func (a *App) ecs(tag string) {
+func (a *App) ecs(clusterQuery string) {
 	regions := tview.NewList().ShowSecondaryText(false)
 
 	clusters := tview.NewList()
@@ -110,7 +115,7 @@ func (a *App) ecs(tag string) {
 	defaultRegion, _ := os.LookupEnv("AWS_DEFAULT_REGION")
 	for idx, region := range regionsList {
 		name := region.name
-		regions.AddItem(name, region.description, 0, func(){
+		regions.AddItem(name, region.description, 0, func() {
 			instances.Clear()
 			clusters.Clear()
 
@@ -139,7 +144,7 @@ func (a *App) findClusters(clusters *tview.List, instances *tview.List) {
 	req := svc.ListClustersRequest(input)
 	resp, err := req.Send(context.TODO())
 	if err != nil {
-		log.WithFields(log.Fields{ "err": err }).Error("Cluster querying error")
+		log.WithFields(log.Fields{"err": err}).Error("Cluster querying error")
 		panic(err)
 	} else {
 		var count int
@@ -173,7 +178,7 @@ func (a *App) findInstances(cluster string, instances *tview.List) {
 	req := svc.ListContainerInstancesRequest(input)
 	resp, err := req.Send(context.TODO())
 	if err != nil {
-		log.WithFields(log.Fields{ "err": err }).Error("Instance querying error")
+		log.WithFields(log.Fields{"err": err}).Error("Instance querying error")
 		panic(err)
 	} else {
 		if len(resp.ContainerInstanceArns) < 1 {
@@ -181,14 +186,14 @@ func (a *App) findInstances(cluster string, instances *tview.List) {
 			return
 		} else {
 			describe := &ecs.DescribeContainerInstancesInput{
-				Cluster: aws.String(cluster),
+				Cluster:            aws.String(cluster),
 				ContainerInstances: resp.ContainerInstanceArns,
 			}
 
 			req := svc.DescribeContainerInstancesRequest(describe)
 			resp, err := req.Send(context.TODO())
 			if err != nil {
-				log.WithFields(log.Fields{ "err": err }).Error("Unable to describe instances!")
+				log.WithFields(log.Fields{"err": err}).Error("Unable to describe instances!")
 				panic(err)
 			}
 
@@ -245,13 +250,13 @@ func (a *App) informational(message string) {
 func (a *App) instanceDetails(instance string, instanceDetails ecs.ContainerInstance) {
 	svc := ec2.New(a.config)
 	input := &ec2.DescribeInstancesInput{
-		InstanceIds: []string { instance },
+		InstanceIds: []string{instance},
 	}
 
 	req := svc.DescribeInstancesRequest(input)
 	resp, err := req.Send(context.TODO())
 	if err != nil {
-		log.WithFields(log.Fields{ "err": err }).Error("Instance querying error")
+		log.WithFields(log.Fields{"err": err}).Error("Instance querying error")
 		panic(err)
 	}
 
@@ -276,6 +281,21 @@ func (a *App) instanceDetails(instance string, instanceDetails ecs.ContainerInst
 		return
 	}
 
+	textView := func(text string, color tcell.Color) tview.Primitive {
+		return tview.NewTextView().
+			SetTextAlign(tview.AlignCenter).
+			SetText(text).
+			SetTextColor(color)
+	}
+
+	header := func(text string) tview.Primitive {
+		return textView(text, tcell.ColorDarkGreen)
+	}
+
+	footer := func(text string) tview.Primitive {
+		return textView(text, tcell.ColorDimGrey)
+	}
+
 	details := tview.NewTable().
 		SetFixed(3, 4).
 		SetSeparator(tview.Borders.Vertical).
@@ -286,57 +306,129 @@ func (a *App) instanceDetails(instance string, instanceDetails ecs.ContainerInst
 		SetCell(0, 2, &tview.TableCell{Text: "AMI", Align: tview.AlignCenter, Color: tcell.ColorGreen, Expansion: 1}).
 		SetCell(0, 3, &tview.TableCell{Text: "SGs", Align: tview.AlignCenter, Color: tcell.ColorGreen, Expansion: 1})
 
-	details.SetCell(1, 0, &tview.TableCell{Text: aws.StringValue(resp.Reservations[0].Instances[0].PrivateIpAddress), Align: tview.AlignLeft, Color: tcell.ColorWhite, Expansion: 1}).
+	details.SetCell(1, 0, &tview.TableCell{Text: aws.StringValue(resp.Reservations[0].Instances[0].PrivateIpAddress), Align: tview.AlignCenter, Color: tcell.ColorWhite, Expansion: 1}).
 		SetCell(1, 1, &tview.TableCell{Text: aws.StringValue(resp.Reservations[0].Instances[0].PublicIpAddress), Align: tview.AlignCenter, Color: tcell.ColorWhite, Expansion: 1}).
 		SetCell(1, 2, &tview.TableCell{Text: aws.StringValue(resp.Reservations[0].Instances[0].ImageId), Align: tview.AlignCenter, Color: tcell.ColorWhite, Expansion: 1}).
-		SetCell(1, 3, &tview.TableCell{Text: "sgs", Align: tview.AlignRight, Color: tcell.ColorWhite, Expansion: 1})
+		SetCell(1, 3, &tview.TableCell{Text: "sgs", Align: tview.AlignCenter, Color: tcell.ColorWhite, Expansion: 1})
 
-	frame := tview.NewFrame(details).
-		SetBorders(1, 1, 1, 1, 2, 2).
-		AddText(aws.StringValue(resp.Reservations[0].Instances[0].Placement.AvailabilityZone), true, tview.AlignLeft, tcell.ColorWhite).
-		AddText(aws.StringValue(instanceDetails.Status), true, tview.AlignCenter, tcell.ColorWhite).
-		AddText(string(resp.Reservations[0].Instances[0].InstanceType), true, tview.AlignRight, tcell.ColorWhite).
-		AddText("(s) SSH to instance", false, tview.AlignCenter, tcell.ColorDimGrey).
-		AddText("(c) Copy private IP", false, tview.AlignCenter, tcell.ColorDimGrey).
-		AddText("(p) Copy public IP", false, tview.AlignCenter, tcell.ColorDimGrey).
-		AddText("(q) Quit", false, tview.AlignCenter, tcell.ColorDimGrey).
-		AddText("(ESC) Back", false, tview.AlignCenter, tcell.ColorDimGrey)
+	grid := tview.NewGrid().
+		SetRows(3, 0, 1).
+		SetColumns(20, 0, 0, 0, 20).
+		SetBorders(false).
+		AddItem(header(aws.StringValue(resp.Reservations[0].Instances[0].Placement.AvailabilityZone)), 0, 0, 1, 1, 0, 0, false).
+		AddItem(header(aws.StringValue(instanceDetails.Status)), 0, 2, 1, 1, 0, 0, false).
+		AddItem(header(string(resp.Reservations[0].Instances[0].InstanceType)), 0, 4, 1, 1, 0, 0, false).
+		AddItem(details, 1, 0, 1, 5, 0, 0, false).
+		AddItem(footer("(s) SSH"), 2, 0, 1, 1, 0, 0, false).
+		AddItem(footer("(c) Copy private IP"), 2, 1, 1, 1, 0, 0, false).
+		AddItem(footer("(p) Copy public IP"), 2, 2, 1, 1, 0, 0, false).
+		AddItem(footer("(ESC) Back"), 2, 3, 1, 1, 0, 0, false).
+		AddItem(footer("(q) Quit"), 2, 4, 1, 1, 0, 0, false)
 
-	frame.SetBorder(true).
+	grid.
+		SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyESC {
+				a.pages.SwitchToPage(mainPage)
+				if a.finderFocus != nil {
+					a.instance.SetFocus(a.finderFocus)
+				}
+			} else if event.Key() == tcell.KeyEnter {
+				// overlay with ssh command, or shell ssh to this instance and close
+				log.Info("hit enter")
+				details.ScrollToEnd()
+			} else {
+				switch event.Rune() {
+
+				case 'q':
+					a.instance.Stop()
+				case 'c':
+					_ = clipboard.WriteAll(aws.StringValue(resp.Reservations[0].Instances[0].PrivateIpAddress))
+				case 'p':
+					_ = clipboard.WriteAll(aws.StringValue(resp.Reservations[0].Instances[0].PublicIpAddress))
+				case 's':
+					panic("Not implemented yet…")
+					// _, session, err := a.connectSSH(aws.StringValue(resp.Reservations[0].Instances[0].PublicIpAddress), a.PublicKey)
+					// if err != nil {
+					// 	panic(err)
+					// }
+					// if session != nil {
+					//
+					// 	a.instance.Suspend(func(){
+					// 		// start shell
+					// 		if err := session.Shell(); err != nil {
+					// 			log.Errorf("Couldn't start shell: %v", err)
+					// 			return
+					// 		}
+					//
+					// 		session.Stdout = os.Stdout
+					// 		session.Stderr = os.Stderr
+					// 		session.Stdin = os.Stdin
+					//
+					// 		session.Wait()
+					// 		defer session.Close()
+					// 	})
+					// }
+				}
+			}
+
+			return event
+		})
+
+	frame := tview.NewFrame(grid)
+
+	frame.
+		SetBorder(true).
 		SetTitle(fmt.Sprintf(`Instance details "%s"`, instance))
 
-
-	details.SetDoneFunc(func(key tcell.Key) {
-		switch key {
-		case tcell.KeyEscape:
-			a.pages.SwitchToPage(mainPage)
-			if a.finderFocus != nil {
-				a.instance.SetFocus(a.finderFocus)
-			}
-		case tcell.KeyEnter:
-			// overlay with ssh command, or shell ssh to this instance and close
-			log.Info("hit enter")
-			details.ScrollToEnd()
-		case tcell.KeyCtrlQ:
-
-		}
-	}).
-	SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		switch event.Rune() {
-
-		case 'q':
-			a.instance.Stop()
-		case 'c':
-			_ = clipboard.WriteAll(aws.StringValue(resp.Reservations[0].Instances[0].PrivateIpAddress))
-		case 'p':
-			_ = clipboard.WriteAll(aws.StringValue(resp.Reservations[0].Instances[0].PublicIpAddress))
-		case 's':
-			a.instance.Stop()
-			_ = clipboard.WriteAll(fmt.Sprintf("ssh %s", aws.StringValue(resp.Reservations[0].Instances[0].PublicDnsName)))
-		}
-
-		return event
-	})
-
 	a.pages.AddPage(instance, frame, true, true)
+}
+
+func (a *App) connectSSH(location string, key string) (*ssh.Client, *ssh.Session, error) {
+	// todo; include ssh agent as an auth method
+	clientConfig := &ssh.ClientConfig{
+		User: "ec2-user",
+		Auth: []ssh.AuthMethod{
+			publicKey(key),
+		},
+		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			return nil
+		},
+	}
+
+	clientConfig.HostKeyCallback = ssh.InsecureIgnoreHostKey()
+
+	// todo; support custom ssh port?
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", location), clientConfig)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	session, err := client.NewSession()
+	if err != nil {
+		defer client.Close()
+		return nil, nil, err
+	}
+
+	return client, session, nil
+}
+
+func publicKey(location string) ssh.AuthMethod {
+	fullPath := location
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			panic(err)
+		}
+		fullPath = path.Join(home, ".ssh", location)
+	}
+
+	key, err := ioutil.ReadFile(fullPath)
+	if err != nil {
+		panic(err)
+	}
+	signer, err := ssh.ParsePrivateKey(key)
+	if err != nil {
+		panic(err)
+	}
+	return ssh.PublicKeys(signer)
 }

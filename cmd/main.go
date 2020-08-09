@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
-	app "github.com/jimschubert/ecs"
 	"os"
 	"strings"
+
+	app "github.com/jimschubert/ecs"
 
 	"github.com/jessevdk/go-flags"
 	log "github.com/sirupsen/logrus"
@@ -16,7 +17,10 @@ var commit = ""
 var projectName = ""
 
 var opts struct {
-	Version bool `short:"v" long:"version" description:"Display version information"`
+	// ClusterQuery string `short:"c" long:"cluster" description:"Cluster name to filter on"`
+	// Query string `short:"q" long:"query" description:"AWS Query syntax for filtering clusters"`
+	KeyName string `short:"k" long:"key" description:"SSH Key for connecting (work in progress)"`
+	Version bool   `short:"v" long:"version" description:"Display version information"`
 }
 
 const parseArgs = flags.HelpFlag | flags.PassDoubleDash
@@ -46,7 +50,11 @@ func main() {
 
 	initLogging()
 
-	application := app.App{}
+	application := app.App{
+		PublicKey: opts.KeyName,
+		// Cluster: opts.Cluster,
+		// Query: opts.Query,
+	}
 	err = application.Run(os.Stdout)
 	if err != nil {
 		log.WithError(err).Errorf("execution failed.")
