@@ -53,6 +53,7 @@ var (
 	}
 )
 
+// App is the structure holding state and inputs for running the application
 type App struct {
 	config       aws.Config
 	instance     *tview.Application
@@ -63,7 +64,10 @@ type App struct {
 	PublicKey    string
 }
 
+// Run is the running entry point for the application
 func (a *App) Run(writer io.Writer) error {
+	log.SetOutput(writer)
+
 	a.instance = tview.NewApplication()
 
 	cfg, err := external.LoadDefaultAWSConfig()
@@ -149,7 +153,7 @@ func (a *App) findClusters(clusters *tview.List, instances *tview.List) {
 	} else {
 		var count int
 		for _, arn := range resp.ClusterArns {
-			count += 1
+			count++
 			shortName := strings.SplitAfter(arn, "/")[1]
 			clusters.AddItem(shortName, "arn", 0, nil)
 		}
@@ -184,48 +188,47 @@ func (a *App) findInstances(cluster string, instances *tview.List) {
 		if len(resp.ContainerInstanceArns) < 1 {
 			a.informational("No instances found in this cluster!")
 			return
-		} else {
-			describe := &ecs.DescribeContainerInstancesInput{
-				Cluster:            aws.String(cluster),
-				ContainerInstances: resp.ContainerInstanceArns,
-			}
-
-			req := svc.DescribeContainerInstancesRequest(describe)
-			resp, err := req.Send(context.TODO())
-			if err != nil {
-				log.WithFields(log.Fields{"err": err}).Error("Unable to describe instances!")
-				panic(err)
-			}
-
-			detailsMap := make(map[string]ecs.ContainerInstance, 0)
-
-			for _, instanceDetails := range resp.ContainerInstances {
-				detailsMap[aws.StringValue(instanceDetails.Ec2InstanceId)] = instanceDetails
-				instances.AddItem(
-					aws.StringValue(instanceDetails.Ec2InstanceId),
-					fmt.Sprintf("  (%s) %d running %d pending; Registered %s",
-						aws.StringValue(instanceDetails.Status),
-						aws.Int64Value(instanceDetails.RunningTasksCount),
-						aws.Int64Value(instanceDetails.PendingTasksCount),
-						instanceDetails.RegisteredAt,
-					),
-					0,
-					nil,
-				)
-			}
-
-			instances.SetCurrentItem(0)
-
-			instances.SetSelectedFunc(func(i int, instance string, t string, s rune) {
-				details, found := detailsMap[instance]
-				if !found {
-					log.Panic("Could not lookup instance details")
-				}
-				a.instanceDetails(instance, details)
-			})
-
-			a.instance.SetFocus(instances)
 		}
+		describe := &ecs.DescribeContainerInstancesInput{
+			Cluster:            aws.String(cluster),
+			ContainerInstances: resp.ContainerInstanceArns,
+		}
+
+		req := svc.DescribeContainerInstancesRequest(describe)
+		resp, err := req.Send(context.TODO())
+		if err != nil {
+			log.WithFields(log.Fields{"err": err}).Error("Unable to describe instances!")
+			panic(err)
+		}
+
+		detailsMap := make(map[string]ecs.ContainerInstance, 0)
+
+		for _, instanceDetails := range resp.ContainerInstances {
+			detailsMap[aws.StringValue(instanceDetails.Ec2InstanceId)] = instanceDetails
+			instances.AddItem(
+				aws.StringValue(instanceDetails.Ec2InstanceId),
+				fmt.Sprintf("  (%s) %d running %d pending; Registered %s",
+					aws.StringValue(instanceDetails.Status),
+					aws.Int64Value(instanceDetails.RunningTasksCount),
+					aws.Int64Value(instanceDetails.PendingTasksCount),
+					instanceDetails.RegisteredAt,
+				),
+				0,
+				nil,
+			)
+		}
+
+		instances.SetCurrentItem(0)
+
+		instances.SetSelectedFunc(func(i int, instance string, t string, s rune) {
+			details, found := detailsMap[instance]
+			if !found {
+				log.Panic("Could not lookup instance details")
+			}
+			a.instanceDetails(instance, details)
+		})
+
+		a.instance.SetFocus(instances)
 	}
 }
 
