@@ -17,7 +17,7 @@ var commit = ""
 var projectName = ""
 
 var opts struct {
-	// ClusterQuery string `short:"c" long:"cluster" description:"Cluster name to filter on"`
+	Cluster string `short:"c" long:"cluster" description:"Cluster name prefix to filter on"`
 	// Query string `short:"q" long:"query" description:"AWS Query syntax for filtering clusters"`
 	KeyName string `short:"k" long:"key" description:"SSH Key for connecting (work in progress)"`
 	Version bool   `short:"v" long:"version" description:"Display version information"`
@@ -52,7 +52,7 @@ func main() {
 
 	application := app.App{
 		PublicKey: opts.KeyName,
-		// Cluster: opts.Cluster,
+		Cluster:   opts.Cluster,
 		// Query: opts.Query,
 	}
 	err = application.Run(os.Stdout)

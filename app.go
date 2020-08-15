@@ -55,13 +55,13 @@ var (
 
 // App is the structure holding state and inputs for running the application
 type App struct {
-	config       aws.Config
-	instance     *tview.Application
-	pages        *tview.Pages
-	finderFocus  tview.Primitive
-	ClusterQuery string
-	Query        string
-	PublicKey    string
+	config      aws.Config
+	instance    *tview.Application
+	pages       *tview.Pages
+	finderFocus tview.Primitive
+	Cluster     string
+	Query       string
+	PublicKey   string
 }
 
 // Run is the running entry point for the application
@@ -77,7 +77,7 @@ func (a *App) Run(writer io.Writer) error {
 
 	a.config = cfg
 
-	a.ecs(a.ClusterQuery)
+	a.ecs()
 
 	if err := a.instance.Run(); err != nil {
 		log.Fatalf("Error running application: %s\n", err)
@@ -86,7 +86,7 @@ func (a *App) Run(writer io.Writer) error {
 	return nil
 }
 
-func (a *App) ecs(clusterQuery string) {
+func (a *App) ecs() {
 	regions := tview.NewList().ShowSecondaryText(false)
 
 	clusters := tview.NewList()
@@ -125,7 +125,12 @@ func (a *App) ecs(clusterQuery string) {
 
 			a.config.Region = name
 
-			a.findClusters(clusters, instances)
+			if len(a.Cluster) > 0 {
+				arr := make([]string, 0)
+				a.findClustersByQuery(clusters, instances, nil, &arr)
+			} else {
+				a.findClusters(clusters, instances)
+			}
 		})
 
 		if defaultRegion != "" && region.name == defaultRegion {
@@ -150,27 +155,73 @@ func (a *App) findClusters(clusters *tview.List, instances *tview.List) {
 	if err != nil {
 		log.WithFields(log.Fields{"err": err}).Error("Cluster querying error")
 		panic(err)
+	}
+
+	var count int
+	for _, arn := range resp.ClusterArns {
+		count++
+		shortName := strings.SplitAfter(arn, "/")[1]
+		clusters.AddItem(shortName, "arn", 0, nil)
+	}
+
+	if count < 1 {
+		a.informational("No clusters found in this region!")
 	} else {
-		var count int
-		for _, arn := range resp.ClusterArns {
-			count++
-			shortName := strings.SplitAfter(arn, "/")[1]
-			clusters.AddItem(shortName, "arn", 0, nil)
-		}
 
-		if count < 1 {
-			a.informational("No clusters found in this region!")
-		} else {
+		clusters.SetCurrentItem(0)
 
-			clusters.SetCurrentItem(0)
+		clusters.SetSelectedFunc(func(i int, cluster string, t string, s rune) {
+			a.findInstances(cluster, instances)
+		})
 
-			clusters.SetSelectedFunc(func(i int, cluster string, t string, s rune) {
-				a.findInstances(cluster, instances)
-			})
+		a.instance.SetFocus(clusters)
+	}
+}
 
-			a.instance.SetFocus(clusters)
+func (a *App) findClustersByQuery(clusters *tview.List, instances *tview.List, token *string, arr *[]string) {
+	svc := ecs.New(a.config)
+	input := &ecs.ListClustersInput{
+		NextToken: token,
+	}
+	req := svc.ListClustersRequest(input)
+	resp, err := req.Send(context.TODO())
+	if err != nil {
+		log.WithFields(log.Fields{"err": err}).Error("Cluster querying error")
+		panic(err)
+	}
+
+	for _, arn := range resp.ClusterArns {
+		shortName := strings.SplitAfter(arn, "/")[1]
+		if strings.HasPrefix(shortName, a.Cluster) {
+			*arr = append(*arr, arn)
 		}
 	}
+
+	if resp.NextToken == nil {
+		a.displayClusters(clusters, instances, arr)
+	} else {
+		a.findClustersByQuery(clusters, instances, resp.NextToken, arr)
+	}
+}
+
+func (a *App) displayClusters(clusters *tview.List, instances *tview.List, arr *[]string) {
+	if len(*arr) == 0 {
+		a.informational("No instances found in this cluster!")
+		return
+	}
+
+	for _, arn := range *arr {
+		shortName := strings.SplitAfter(arn, "/")[1]
+		clusters.AddItem(shortName, "arn", 0, nil)
+	}
+
+	clusters.SetCurrentItem(0)
+
+	clusters.SetSelectedFunc(func(i int, cluster string, t string, s rune) {
+		a.findInstances(cluster, instances)
+	})
+
+	a.instance.SetFocus(clusters)
 }
 
 func (a *App) findInstances(cluster string, instances *tview.List) {
