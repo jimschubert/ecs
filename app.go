@@ -355,6 +355,14 @@ func (a *App) instanceDetails(instance string, instanceDetails ecs.ContainerInst
 		SetSeparator(tview.Borders.Vertical).
 		SetBordersColor(tcell.ColorLightGrey)
 
+	sgs := strings.Builder{}
+	for idx, sg := range resp.Reservations[0].Instances[0].SecurityGroups {
+		sgs.WriteString(*sg.GroupId)
+		if idx < len(resp.Reservations[0].Instances[0].SecurityGroups)-1 {
+			sgs.WriteString(",")
+		}
+	}
+
 	details.SetCell(0, 0, &tview.TableCell{Text: "Private IP", Align: tview.AlignCenter, Color: tcell.ColorGreen, Expansion: 1}).
 		SetCell(0, 1, &tview.TableCell{Text: "Public IP", Align: tview.AlignCenter, Color: tcell.ColorGreen, Expansion: 1}).
 		SetCell(0, 2, &tview.TableCell{Text: "AMI", Align: tview.AlignCenter, Color: tcell.ColorGreen, Expansion: 1}).
@@ -363,7 +371,7 @@ func (a *App) instanceDetails(instance string, instanceDetails ecs.ContainerInst
 	details.SetCell(1, 0, &tview.TableCell{Text: aws.StringValue(resp.Reservations[0].Instances[0].PrivateIpAddress), Align: tview.AlignCenter, Color: tcell.ColorWhite, Expansion: 1}).
 		SetCell(1, 1, &tview.TableCell{Text: aws.StringValue(resp.Reservations[0].Instances[0].PublicIpAddress), Align: tview.AlignCenter, Color: tcell.ColorWhite, Expansion: 1}).
 		SetCell(1, 2, &tview.TableCell{Text: aws.StringValue(resp.Reservations[0].Instances[0].ImageId), Align: tview.AlignCenter, Color: tcell.ColorWhite, Expansion: 1}).
-		SetCell(1, 3, &tview.TableCell{Text: "sgs", Align: tview.AlignCenter, Color: tcell.ColorWhite, Expansion: 1})
+		SetCell(1, 3, &tview.TableCell{Text: sgs.String(), Align: tview.AlignCenter, Color: tcell.ColorWhite, Expansion: 1})
 
 	grid := tview.NewGrid().
 		SetRows(3, 0, 1).
